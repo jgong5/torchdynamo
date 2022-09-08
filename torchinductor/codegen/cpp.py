@@ -412,7 +412,7 @@ class CppKernel(Kernel):
     def codegen_loops(self, code, worksharing):
         threads = config.cpp.threads
         if threads < 1:
-            threads = multiprocessing.cpu_count()
+            threads = torch.get_num_threads() # instead of multiprocessing.cpu_count()
 
         loops = [LoopLevel(var, size) for var, size in zip(self.itervars, self.ranges)]
         loops, reductions = LoopNest(loops[: self.reduction_depth]), LoopNest(
@@ -476,6 +476,7 @@ class CppKernel(Kernel):
                 code.splice(self.reduction_suffix)
 
     def decide_parallel_depth(self, ranges, threads):
+        log.debug(f"deciding parallel depth for {threads} threads:")
         if threads == 1:
             return 0
         seq = self.size_hint()
@@ -483,6 +484,7 @@ class CppKernel(Kernel):
         depth = 0
         for expr in ranges:
             hint = V.graph.sizevars.size_hint(expr)
+            log.debug(f"  expr: {expr}, size_hint: {hint}, parallel: {par}, seq: {seq}")
             if par >= 2 * threads or par == threads:
                 break
             if seq // threads < config.cpp.min_chunk_size:
@@ -491,6 +493,7 @@ class CppKernel(Kernel):
             depth += 1
             par *= hint
             seq /= hint
+            
         return depth
 
     @contextlib.contextmanager
