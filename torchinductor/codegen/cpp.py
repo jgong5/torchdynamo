@@ -23,6 +23,9 @@ from .common import Kernel
 from .common import KernelArgs
 from .common import OpOverrides
 
+import logging
+log = logging.getLogger(__name__)
+
 DTYPE_TO_CPP = {
     torch.float32: "float",
     torch.float64: "double",
@@ -430,10 +433,14 @@ class CppKernel(Kernel):
             par_depth = self.decide_parallel_depth(
                 self.call_ranges[: self.reduction_depth], threads
             )
+            log.debug(f"Parallel depth: {par_depth}:")
+            log.debug(f"{loops}")
         else:
             reduction_par_depth = self.decide_parallel_depth(
                 self.call_ranges[self.reduction_depth :], threads
             )
+            log.debug(f"Reduction parallel depth: {par_depth}:")
+            log.debug(f"{reductions}")
 
         with contextlib.ExitStack() as stack:
             if par_depth:
@@ -654,6 +661,11 @@ class LoopLevel:
     collapsed: bool = False
     reduction_vars: Dict[str, str] = None
 
+    def __str__(self):
+        return f"For({self.var} in {self.size}, parallel {self.parallel}, simd {self.simd}, collapsed {self.collapsed}, reduction_vars {self.reduction_vars})"
+
+    __repr__ = __str__
+
     def lines(self):
         if self.reduction_vars:
             lookup = {
@@ -696,6 +708,16 @@ class LoopNest:
 
     def __bool__(self):
         return bool(self.loops)
+
+    def __str__(self):
+        s = ""
+        indent = ""
+        for loop in self.loops:
+            s += indent + str(loop) + "\n"
+            indent += "  "
+        return s
+
+    __repr__ = __str__
 
     def mark_reduction(self, reduction_vars):
         for loop in self.loops:
