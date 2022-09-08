@@ -93,12 +93,14 @@ def gen_gm_and_inputs(target, args, kwargs):
 
 
 def timed(model, example_inputs, times=1):
-    synchronize()
+    if torch.cuda.is_available():
+        synchronize()
     torch.manual_seed(1337)
     t0 = time.perf_counter()
     for _ in range(times):
         result = model(*example_inputs)
-        synchronize()
+        if torch.cuda.is_available():
+            synchronize()
     t1 = time.perf_counter()
     # GC the result after timing
     assert result is not None
@@ -108,7 +110,7 @@ def timed(model, example_inputs, times=1):
 def print_performance(fn, args=(), times=10, repeat=10, baseline=1.0):
     timings = [timed(fn, args, times) for _ in range(repeat)]
     took = np.median(timings)
-    print(f"{took/baseline:.6f}")
+    print(f"{took/baseline*1e6:.3f}us")
     return took
 
 
