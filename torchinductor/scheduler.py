@@ -513,6 +513,7 @@ class Scheduler:
             assert (
                 node.origins is not None
             ), "All nodes passed to scheduling must have an origin"
+            log.debug(f"Creating schedule for node: {node}")
             if node.is_no_op():
                 self.nodes.append(NopKernelSchedulerNode(self, node))
             elif isinstance(node, ir.ComputedBuffer):

@@ -582,6 +582,7 @@ class KernelGroup:
         self.count = 0
 
     def new_kernel(self):
+        log.debug(f"Creating new kernel for args: {self.args.python_argdefs()}")
         return CppKernel(self.args)
 
     def finalize_kernel(self, new_kernel, scheduler):
