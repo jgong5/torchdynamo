@@ -466,6 +466,9 @@ class CppKernel(Kernel):
 
                 with contextlib.ExitStack() as stack:
                     reductions.codegen(code, stack)
+                    log.debug(f"loads: {self.loads.getvalue()}")
+                    log.debug(f"compute: {self.compute.getvalue()}")
+                    log.debug(f"stores: {self.stores.getvalue()}")
                     code.splice(self.loads)
                     code.splice(self.compute)
                     code.splice(self.stores)
@@ -566,10 +569,23 @@ class CppScheduling:
 
         kernel_group.finalize_kernel(kernel, scheduler)
 
-    def flush(self):
-        self.kernel_group.codegen_define_and_call(V.graph.wrapper_code)
+    def flush(self, wrapper=V.graph.wrapper_code):
+        self.kernel_group.codegen_define_and_call(wrapper)
         self.kernel_group = KernelGroup()
 
+class AutotuneCppScheduling(CppScheduling):
+    def __init__(self, scheduler):
+        super(AutotuneCppScheduling, self).__init__(scheduler)
+
+    def codegen_nodes(self, nodes):
+        from .wrapper import WrapperCodeGen
+        class Wrapper(WrapperCodeGen):
+            pass
+        wrapper = Wrapper()
+        # TODO: schedule nodes according to current configs
+        super(AutotuneCppScheduling, self).codegen_nodes(nodes)
+        self.flush(wrapper=wrapper)
+        super(AutotuneCppScheduling, self).codegen_nodes(nodes)
 
 class KernelGroup:
     def __init__(self):
