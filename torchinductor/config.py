@@ -65,6 +65,7 @@ class cpp:
         "clang++",
         "g++",
     )
+    use_autotune = False
 
 
 # config specific to codegen/triton.py

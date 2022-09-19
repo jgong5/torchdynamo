@@ -1045,9 +1045,12 @@ class Scheduler:
         ), f"{device} should have been normalized in lowering"
         V.graph.device_types.add(device.type)
         if device.type == "cpu":
-            from .codegen.cpp import AutotuneCppScheduling
-
-            return AutotuneCppScheduling(self)
+            if config.cpp.use_autotune:
+                from .codegen.cpp import AutotuneCppScheduling
+                return AutotuneCppScheduling(self)
+            else:
+                from .codegen.cpp import CppScheduling
+                return CppScheduling(self)
         else:
             from .codegen.triton import TritonScheduling
 

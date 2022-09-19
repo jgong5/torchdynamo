@@ -106,6 +106,10 @@ def timed(model, example_inputs, times=1):
     assert result is not None
     return t1 - t0
 
+def bench(fn, args=(), times=1, repeat=10, warmup=10):
+    timed(fn, args, warmup)
+    timings = [timed(fn, args, times) for _ in range(repeat)]
+    return np.median(timings)
 
 def print_performance(fn, args=(), times=10, repeat=10, baseline=1.0):
     timings = [timed(fn, args, times) for _ in range(repeat)]

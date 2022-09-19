@@ -312,5 +312,5 @@ class DebugFormatter:
     def graph_diagram(self, nodes: SchedulerNodeList):
         draw_buffers(nodes, fname=self.filename("graph_diagram.svg"))
 
-    def output_code(self, filename):
-        shutil.copy(filename, self.filename("output_code.py"))
+    def output_code(self, filename, output_code_fn="output_code.py"):
+        shutil.copy(filename, self.filename(output_code_fn))

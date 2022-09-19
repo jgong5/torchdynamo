@@ -353,16 +353,7 @@ class WrapperCodeGen(CodeGen):
                 f"device='{device.type}', dtype={dtype})"
             )
 
-        output.writelines(["", "", 'if __name__ == "__main__":'])
-        with output.indent():
-            output.splice(
-                """
-                from torchdynamo.testing import rand_strided
-                from torchinductor.utils import print_performance
-                """,
-                strip=True,
-            )
-
+        def add_all_fake_inputs():
             for name, value in V.graph.constants.items():
                 add_fake_input(
                     name, value.size(), value.stride(), value.device, value.dtype
@@ -375,9 +366,42 @@ class WrapperCodeGen(CodeGen):
                     name, shape, stride, value.get_device(), value.get_dtype()
                 )
 
-            output.writeline(
-                f"print_performance(lambda: call({', '.join(V.graph.graph_inputs.keys())}))"
-            )
+        def add_bench_run():
+            output.writelines(["", "", 'def bench_run():'])
+            with output.indent():
+                output.splice(
+                    """
+                    from torchdynamo.testing import rand_strided
+                    from torchinductor.utils import bench
+                    """,
+                    strip=True,
+                )
+
+                add_all_fake_inputs()
+
+                output.writeline(
+                    f"return bench(lambda: call({', '.join(V.graph.graph_inputs.keys())}))"
+                )
+
+        def add_main():
+            output.writelines(["", "", 'if __name__ == "__main__":'])
+            with output.indent():
+                output.splice(
+                    """
+                    from torchdynamo.testing import rand_strided
+                    from torchinductor.utils import print_performance
+                    """,
+                    strip=True,
+                )
+
+                add_all_fake_inputs()
+
+                output.writeline(
+                    f"print_performance(lambda: call({', '.join(V.graph.graph_inputs.keys())}))"
+                )
+
+        add_bench_run()
+        add_main()
 
     def define_kernel(self, name: str, kernel: str):
         self.header.splice(f"\n\n{name} = {kernel}")

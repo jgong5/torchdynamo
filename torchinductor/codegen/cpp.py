@@ -538,23 +538,66 @@ class CppScheduling:
 
         kernel_group.finalize_kernel(kernel, scheduler)
 
-    def flush(self, wrapper=V.graph.wrapper_code):
-        self.kernel_group.codegen_define_and_call(wrapper)
+    def flush(self):
+        self.kernel_group.codegen_define_and_call(V.graph.wrapper_code)
         self.kernel_group = KernelGroup()
 
 class AutotuneCppScheduling(CppScheduling):
     def __init__(self, scheduler):
         super(AutotuneCppScheduling, self).__init__(scheduler)
+        self.scheduled_nodes_list = []
+        from threading import local
+        self.threadlocal = local()
+
+    @contextlib.contextmanager
+    def codegen_continuation(self):
+        buffer_names_no_longer_needed = self.scheduler.buffer_names_no_longer_needed
+        self.scheduler.buffer_names_no_longer_needed = set()
+        self.threadlocal.orig_wrapper_code = V.graph.wrapper_code
+        self.threadlocal.orig_removed_buffers = V.graph.removed_buffers
+        self.threadlocal.orig_graph_outputs = V.graph.graph_outputs
+        from .wrapper import WrapperCodeGen
+        V.graph.wrapper_code = WrapperCodeGen()
+        V.graph.removed_buffers = set()
+        V.graph.graph_outputs = []
+        sched = CppScheduling(self.scheduler)
+        for scheduled_nodes in self.scheduled_nodes_list:
+            sched.codegen_nodes(scheduled_nodes)
+        yield (V.graph.wrapper_code, sched)
+        V.graph.wrapper_code = self.threadlocal.orig_wrapper_code
+        V.graph.removed_buffers = self.threadlocal.orig_removed_buffers
+        V.graph.graph_outputs = self.threadlocal.orig_graph_outputs
+        self.scheduler.buffer_names_no_longer_needed = buffer_names_no_longer_needed
 
     def codegen_nodes(self, nodes):
-        from .wrapper import WrapperCodeGen
-        class Wrapper(WrapperCodeGen):
-            pass
-        wrapper = Wrapper()
         # TODO: schedule nodes according to current configs
-        super(AutotuneCppScheduling, self).codegen_nodes(nodes)
-        self.flush(wrapper=wrapper)
-        super(AutotuneCppScheduling, self).codegen_nodes(nodes)
+        schedule_configs = self.generate_schedule_configs(nodes)
+        timings = []
+        candidate_nodes_list = []
+        for schedule_config in schedule_configs:
+            new_nodes = self.apply_schedule_config(nodes, schedule_config)
+            candidate_nodes_list.append(new_nodes)
+            with self.codegen_continuation() as (wrapper_code, cpp_sched):
+                cpp_sched.codegen_nodes(nodes)
+                cpp_sched.flush()
+                from ..codecache import PyCodeCache
+                mod = PyCodeCache.load(wrapper_code.generate())
+                timings.append(mod.bench_run())
+        best_nodes = candidate_nodes_list[timings.index(min(timings))]
+        super(AutotuneCppScheduling, self).codegen_nodes(best_nodes)
+        self.scheduled_nodes_list.append(best_nodes)
+
+    def generate_schedule_configs(self, nodes):
+        # TODO:
+        return [None]
+
+    def apply_schedule_config(self, nodes, schedule_config):
+        # TODO:
+        return nodes
+
+    def flush(self):
+        super(AutotuneCppScheduling, self).flush()
+        self.scheduled_nodes_list.clear()
 
 class KernelGroup:
     def __init__(self):
