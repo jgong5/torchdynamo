@@ -7,6 +7,8 @@
 
 #include "ATen/core/PhiloxRNGEngine.h"
 #include <c10/util/Half.h>
+#include <ATen/cpu/vec/functional.h>
+#include <ATen/cpu/vec/vec.h>
 
 typedef at::Half half;
 
