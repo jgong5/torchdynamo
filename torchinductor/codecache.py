@@ -116,7 +116,7 @@ def cpp_compile_command(input, output, include_pytorch=False):
         r"[ \n]+",
         " ",
         f"""
-            {cpp_compiler()} -shared -fPIC -Wall -std=c++14 -Wno-unused-variable
+            {cpp_compiler()} -shared -fPIC -Wall -std=c++14 -Wno-unused-variable -DCPU_CAPABILITY_AVX2
             {ipaths} {lpaths} {libs}
             -march=native -O3 -ffast-math -fno-finite-math-only -fopenmp
             -o{output} {input}
@@ -134,7 +134,7 @@ class CppCodeCache:
         if key not in cls.cache:
             output_path = input_path[:-3] + "so"
             if not os.path.exists(output_path):
-                cmd = cpp_compile_command(input=input_path, output=output_path).split(
+                cmd = cpp_compile_command(input=input_path, output=output_path, include_pytorch=True).split(
                     " "
                 )
                 try:
@@ -144,7 +144,7 @@ class CppCodeCache:
 
             cls.cache[key] = cdll.LoadLibrary(output_path)
             cls.cache[key].key = key
-
+        print(f"Load lib: {cls.cache[key]}")
         return cls.cache[key]
 
 

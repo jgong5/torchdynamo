@@ -58,6 +58,7 @@ class cpp:
     simdlen = None
     min_chunk_size = 4096
     cxx = (
+        #"/opt/intel/compilers_and_libraries/linux/bin/intel64/icc",
         None,  # download gcc12 from conda-forge if conda is installed
         "g++-12",
         "g++-11",
