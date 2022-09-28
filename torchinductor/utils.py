@@ -91,30 +91,43 @@ def gen_gm_and_inputs(target, args, kwargs):
     gm = torch.fx.GraphModule({}, g)
     return gm, a_args
 
+def cpu_flush_cache(cache_size=50):
+    start = time.perf_counter()
+    a = torch.ones(cache_size * 1024 * 1024 // 4, dtype=torch.float)
+    b = torch.ones(cache_size * 1024 * 1024 // 4, dtype=torch.float)
+    a += b
+    del a
+    del b
+    end = time.perf_counter()
+    return end-start
 
-def timed(model, example_inputs, times=1):
+def timed(model, example_inputs, times=1, flush_cache=True):
     if torch.cuda.is_available():
         synchronize()
     torch.manual_seed(1337)
+    flush_cache_time = 0
     t0 = time.perf_counter()
     for _ in range(times):
+        if flush_cache:
+            flush_cache_time += cpu_flush_cache()
         result = model(*example_inputs)
         if torch.cuda.is_available():
             synchronize()
     t1 = time.perf_counter()
     # GC the result after timing
     assert result is not None
-    return t1 - t0
+    return t1 - t0 - flush_cache_time
 
 def bench(fn, args=(), times=1, repeat=10, warmup=10):
-    timed(fn, args, warmup)
+    timed(fn, args, warmup, flush_cache=False)
     timings = [timed(fn, args, times) for _ in range(repeat)]
     return np.median(timings)
 
 def print_performance(fn, args=(), times=10, repeat=10, baseline=1.0):
+    timed(fn, args, times, flush_cache=False)
     timings = [timed(fn, args, times) for _ in range(repeat)]
     took = np.median(timings)
-    print(f"{took/baseline*1e6:.3f}us")
+    print(f"{took/baseline/repeat*1e6:.3f}us")
     return took
 
 
