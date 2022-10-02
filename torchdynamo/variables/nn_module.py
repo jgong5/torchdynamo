@@ -28,6 +28,7 @@ from ..utils import proxy_args_kwargs
 from .base import MutableLocal
 from .base import VariableTracker
 from .base import typestr
+from .functions import invoke_and_store_as_constant
 from .user_defined import UserDefinedObjectVariable
 
 
@@ -57,7 +58,7 @@ class NNModuleVariable(VariableTracker):
         result = []
         for idx, submod in enumerate(base):
             result.append(
-                tx.output.add_submodule(
+                tx.output.register_attr_or_module(
                     submod,
                     self.module_key,
                     idx,
@@ -72,7 +73,7 @@ class NNModuleVariable(VariableTracker):
         mod = tx.output.get_submodule(self.module_key)
         result = hasattr(mod, name)
         return variables.ConstantVariable(result, **options).add_guard(
-            NNModuleSource(AttrSource(self.source, name)).create_guard(
+            NNModuleSource(AttrSource(self.source, name)).make_guard(
                 GuardBuilder.HASATTR
             )
         )
@@ -115,11 +116,15 @@ class NNModuleVariable(VariableTracker):
 
         if name in base_dict:
             subobj = base_dict[name]
-        elif name in base_dict["_modules"] and name not in all_class_attribute_names:
+        elif (
+            "_modules" in base_dict
+            and name in base_dict["_modules"]
+            and name not in all_class_attribute_names
+        ):
             subobj = base_dict["_modules"][name]
-        elif name in base_dict["_parameters"]:
+        elif "_parameters" in base_dict and name in base_dict["_parameters"]:
             subobj = base_dict["_parameters"][name]
-        elif name in base_dict["_buffers"]:
+        elif "_buffers" in base_dict and name in base_dict["_buffers"]:
             subobj = base_dict["_buffers"][name]
         else:
             subobj = inspect.getattr_static(base, name)
@@ -175,7 +180,7 @@ class NNModuleVariable(VariableTracker):
                 (arg,) = args
                 for idx, submod in enumerate(mod):
                     tx.call_function(
-                        tx.output.add_submodule(
+                        tx.output.register_attr_or_module(
                             submod,
                             self.module_key,
                             idx,
@@ -224,6 +229,7 @@ class NNModuleVariable(VariableTracker):
         name,
         args: "List[VariableTracker]",
         kwargs: "Dict[str, VariableTracker]",
+        constant=False,
     ) -> "VariableTracker":
         from . import ConstantVariable
         from . import ListIteratorVariable
@@ -240,6 +246,11 @@ class NNModuleVariable(VariableTracker):
             inspect.getfile(module.__class__._check_input_dim)
         ):
             return ConstantVariable(True, **options)
+
+        if constant:
+            fn = getattr(module, name)
+            name = f"{module.__class__.__name__}_{name}_result"
+            return invoke_and_store_as_constant(tx, fn, name, options, args, kwargs)
 
         if not all(
             x.is_python_constant() for x in itertools.chain(args, kwargs.values())
@@ -263,7 +274,7 @@ class NNModuleVariable(VariableTracker):
                 name = re.sub(r"[.]([0-9]+)([.]|$)", r"[\1]\2", name)
                 src = NNModuleSource(getsource(self.source, name))
                 result.append(
-                    tx.output.add_submodule(
+                    tx.output.register_attr_or_module(
                         submod,
                         key,
                         name,
@@ -277,7 +288,7 @@ class NNModuleVariable(VariableTracker):
             return TupleVariable(
                 [
                     ConstantVariable(name, **options),
-                    tx.output.add_submodule(
+                    tx.output.register_attr_or_module(
                         obj,
                         key,
                         name,
@@ -346,7 +357,7 @@ class NNModuleVariable(VariableTracker):
                     key = keys[idx]
                     src = NNModuleSource(GetItemSource(self.source, key))
                     result.append(
-                        tx.output.add_submodule(
+                        tx.output.register_attr_or_module(
                             submod,
                             key,
                             source=src,
@@ -357,7 +368,7 @@ class NNModuleVariable(VariableTracker):
 
             key = args[0].as_python_constant()
             submod = module[key]
-            return tx.output.add_submodule(
+            return tx.output.register_attr_or_module(
                 submod,
                 key,
                 args[0].as_python_constant(),
@@ -459,7 +470,7 @@ class UnspecializedNNModuleVariable(UserDefinedObjectVariable):
             if method is torch.nn.Module.parameters:
                 assert not args or kwargs
                 options["guards"].add(
-                    self.source.create_guard(GuardBuilder.NN_MODULE_PARAM_NAMES)
+                    self.source.make_guard(GuardBuilder.NN_MODULE_PARAM_NAMES)
                 )
                 items = []
                 for name, value in self.value.named_parameters():
