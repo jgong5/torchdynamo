@@ -91,13 +91,20 @@ def gen_gm_and_inputs(target, args, kwargs):
     gm = torch.fx.GraphModule({}, g)
     return gm, a_args
 
+a = None
+b = None
+
 def cpu_flush_cache(cache_size=50):
     start = time.perf_counter()
-    a = torch.ones(cache_size * 1024 * 1024 // 4, dtype=torch.float)
-    b = torch.ones(cache_size * 1024 * 1024 // 4, dtype=torch.float)
+    global a
+    global b
+    if a == None:
+        a = torch.ones(cache_size * 1024 * 1024 // 4, dtype=torch.float)
+    if b == None:
+        b = torch.ones(cache_size * 1024 * 1024 // 4, dtype=torch.float)
+    a.fill_(2)
+    b.fill_(3)
     a += b
-    del a
-    del b
     end = time.perf_counter()
     return end-start
 
@@ -123,11 +130,11 @@ def bench(fn, args=(), times=1, repeat=10, warmup=10):
     timings = [timed(fn, args, times) for _ in range(repeat)]
     return np.median(timings)
 
-def print_performance(fn, args=(), times=10, repeat=10, baseline=1.0):
+def print_performance(fn, args=(), times=1, repeat=100, baseline=1.0):
     timed(fn, args, times, flush_cache=False)
     timings = [timed(fn, args, times) for _ in range(repeat)]
     took = np.median(timings)
-    print(f"{took/baseline/repeat*1e6:.3f}us")
+    print(f"{took/baseline/times*1e6:.3f}us")
     return took
 
 
