@@ -126,14 +126,14 @@ def timed(model, example_inputs, times=1, flush_cache=True):
     assert result is not None
     return t1 - t0 - flush_cache_time
 
-def bench(fn, args=(), times=1, repeat=10, warmup=10):
+def bench(fn, args=(), times=1, repeat=10, warmup=10, flush_cache=True):
     timed(fn, args, warmup, flush_cache=False)
-    timings = [timed(fn, args, times) for _ in range(repeat)]
+    timings = [timed(fn, args, times, flush_cache=flush_cache) for _ in range(repeat)]
     return np.median(timings)
 
-def print_performance(fn, args=(), times=1, repeat=100, baseline=1.0):
+def print_performance(fn, args=(), times=1, repeat=1000, baseline=1.0, flush_cache=True):
     timed(fn, args, times, flush_cache=False)
-    timings = [timed(fn, args, times) for _ in range(repeat)]
+    timings = [timed(fn, args, times, flush_cache=flush_cache) for _ in range(repeat)]
     took = np.median(timings)
     print(f"{took/baseline/times*1e6:.3f}us")
     return took
