@@ -1,4 +1,4 @@
-#!/usr/bin/env pytest
+# Owner(s): ["module: dynamo"]
 import importlib
 import json
 import os
@@ -8,6 +8,7 @@ from unittest.mock import patch
 import torch
 
 import torchdynamo
+import torchdynamo.test_case
 from torchdynamo.optimizations import backends
 from torchdynamo.optimizations.analysis import has_mutation
 from torchdynamo.optimizations.log_args import conv_args_analysis
@@ -65,7 +66,7 @@ class Conv_Bn_Relu(torch.nn.Module):
         return self.relu(self.bn(self.conv(x)))
 
 
-class TestOptimizations(torchdynamo.testing.TestCase):
+class TestOptimizations(torchdynamo.test_case.TestCase):
     def test_inplacifier(self):
         gm = torch.fx.symbolic_trace(Seq())
         normalize(gm)
@@ -177,14 +178,14 @@ class TestOptimizations(torchdynamo.testing.TestCase):
         model = model.eval()
         input = torch.randn(8, 3, 64, 64).contiguous(memory_format=torch.channels_last)
         r1 = model(input)
-        opt_model = torchdynamo.optimize(backends.ipex_bf16)
+        opt_model = torchdynamo.optimize(backends.ipex_bf16)(model)
         with torch.no_grad(), torch.cpu.amp.autocast():
             r2 = opt_model(input)
         self.assertTrue(same(r1, r2.float(), tol=0.1))
         self.assertEqual(r2.dtype, torch.bfloat16)
 
 
-class NormalizeIRTests(torchdynamo.testing.TestCase):
+class NormalizeIRTests(torchdynamo.test_case.TestCase):
     @unittest.skipIf(not has_functorch(), "requires functorch")
     def test_inplace_normalize(self):
         def fn(a, b):
@@ -203,4 +204,6 @@ class NormalizeIRTests(torchdynamo.testing.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    from torchdynamo.test_case import run_tests
+
+    run_tests()

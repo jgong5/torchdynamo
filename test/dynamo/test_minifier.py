@@ -1,4 +1,4 @@
-#!/usr/bin/env pytest
+# Owner(s): ["module: dynamo"]
 import os
 import shutil
 from unittest.mock import patch
@@ -6,6 +6,7 @@ from unittest.mock import patch
 import torch
 
 import torchdynamo
+import torchdynamo.test_case
 import torchdynamo.testing
 from torchdynamo.optimizations.backends import create_backend
 
@@ -23,7 +24,7 @@ class MockModule(torch.nn.Module):
         return x
 
 
-class MinfierTests(torchdynamo.testing.TestCase):
+class MinfierTests(torchdynamo.test_case.TestCase):
     def test_after_dynamo(self):
         @create_backend
         def bad_dynamo_backend(subgraph):
@@ -58,17 +59,23 @@ class MinfierTests(torchdynamo.testing.TestCase):
         inner()
         self.assertTrue(os.path.exists(repro_file))
 
-    def test_after_aot(self):
+    # If error_at_aot is True, an error will be produced when AOTAutograd
+    # attempts to generate the backward graph.
+    # If error_after_aot is False, an error will be produced in inductor.
+    def _test_around_aot(self, error_at_aot):
         mod = MockModule()
         opt_mod = torchdynamo.optimize("inductor")(mod)
         repro_dir = "/tmp/test_minifier"
         repro_file = os.path.join(repro_dir, "minifier_launcher.py")
         shutil.rmtree(repro_dir, ignore_errors=True)
 
-        @patch.object(torchdynamo.config, "repro_after", "aot")
+        repro_after = "dynamo" if error_at_aot else "aot"
+
+        @patch.object(torchdynamo.config, "repro_after", repro_after)
         @patch.object(torchdynamo.config, "repro_dir", repro_dir)
         def inner():
             x = torch.randn(4)
+            x.requires_grad = error_at_aot
             try:
                 opt_mod(x)
             except Exception:
@@ -77,3 +84,15 @@ class MinfierTests(torchdynamo.testing.TestCase):
         inner()
 
         self.assertTrue(os.path.exists(repro_file))
+
+    def test_at_aot(self):
+        self._test_around_aot(True)
+
+    def test_after_aot(self):
+        self._test_around_aot(False)
+
+
+if __name__ == "__main__":
+    from torchdynamo.test_case import run_tests
+
+    run_tests()

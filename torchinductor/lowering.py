@@ -157,6 +157,11 @@ def _register_lowering(
     @functools.wraps(decomp_fn)
     def wrapped(*args, **kwargs):
         args = list(args)
+        unpacked = False
+        # TODO maybe we need to use pytrees here
+        if len(args) == 1 and isinstance(args[0], (list, tuple)):
+            unpacked = True
+            args = args[0]
         # Only look at args that are Tensors
         indices = [i for i, x in enumerate(args) if isinstance(x, TensorBox)]
         # kwargs tensors not supported yet
@@ -173,14 +178,20 @@ def _register_lowering(
                 dtype = get_promoted_dtype(
                     *promoting_args, type_promotion_kind=type_promotion_kind
                 )
-            for i in indices:
-                args[i] = to_dtype(args[i], dtype)
+            # sometimes args are an immutable list so we can't mutate them
+            new_args = []
             for i in range(len(args)):
-                if isinstance(args[i], ir.Constant):
-                    args[i] = ir.Constant(
-                        args[i].value, dtype, args[indices[0]].get_device()
+                if i in indices:
+                    new_args.append(to_dtype(args[i], dtype))
+                elif isinstance(args[i], ir.Constant):
+                    new_args.append(
+                        ir.Constant(args[i].value, dtype, args[indices[0]].get_device())
                     )
-
+                else:
+                    new_args.append(args[i])
+            args = new_args
+        if unpacked:
+            args = [args]
         if broadcast and indices:
             for i, x in zip(indices, broadcast_tensors(*[args[i] for i in indices])):
                 args[i] = x
@@ -250,9 +261,14 @@ def broadcast_symbolic_shapes(a, b):
     return tuple(reversed(output))
 
 
-def promote_constants(inputs):
+def promote_constants(inputs, override_return_dtype=None):
     if not any(isinstance(x, (int, float)) for x in inputs):
         return inputs
+    if all(isinstance(x, (int, float)) for x in inputs):
+        dtype = override_return_dtype or get_promoted_dtype(
+            *inputs, type_promotion_kind=ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+        )
+        return [ir.Constant(x, dtype, decode_device(None)) for x in inputs]
     ex = next(x for x in inputs if isinstance(x, TensorBox))
     return [
         (
@@ -274,7 +290,7 @@ def make_pointwise(
     allow_alpha=False,
 ):
     def inner(*inputs: List[TensorBox], alpha=None):
-        inputs = promote_constants(inputs)
+        inputs = promote_constants(inputs, override_return_dtype)
         if allow_alpha:
             if alpha is not None and alpha != 1:
                 inputs = list(inputs)
@@ -473,12 +489,13 @@ def squeeze(x, dim=None):
     assert isinstance(x, TensorBox)
     if dim is None:
         return TensorBox(SqueezeView.create(x.data))
-
-    dim = _validate_dim(x, dim, 0)
+    offset = len(x.get_size()) == 0
+    dim = _validate_dim(x, dim, offset)
     new_shape = list(x.get_size())
-    removed = new_shape.pop(dim)
-    if V.graph.sizevars.maybe_guard_equals(removed, 1):
-        return view(x, new_shape)
+    if len(new_shape) > 0:
+        removed = new_shape.pop(dim)
+        if V.graph.sizevars.maybe_guard_equals(removed, 1):
+            return view(x, new_shape)
 
     # squeeze does nothing if the size isn't 1
     return x
@@ -849,7 +866,7 @@ def make_fallback(kernel):
     assert (
         kernel not in decompositions
     ), f"both a fallback and a decomp for same kernel: {kernel}"
-    if get_decompositions([kernel]):
+    if get_decompositions([kernel]) and kernel is not aten.cumsum:
         log.warning(
             f"make_fallback({kernel}): a decomposition exists, we should switch to it"
         )
@@ -887,7 +904,7 @@ def bernoulli_(x, *args):
 # This shouldn't be called in general
 @register_lowering(aten._foobar)
 def _foobar(_):
-    assert False
+    raise AssertionError()
 
 
 @functools.lru_cache(1)
@@ -1105,6 +1122,9 @@ if hasattr(aten, "lift_fresh_copy"):
     register_lowering(aten.lift_fresh_copy)(clone)
 
 
+fallback_arange = fallback_handler(aten.arange)
+
+
 @register_lowering([torch.arange, aten.arange])
 def arange(
     start,
@@ -1129,9 +1149,17 @@ def arange(
     if isinstance(step, float) and int(step) == step:
         step = int(step)
 
-    assert isinstance(start, int)
-    assert isinstance(end, int)
-    assert isinstance(step, int)
+    # Triton kernel doesn't support float arange yet, fallback to aten.arange
+    if not (isinstance(start, int) and isinstance(end, int) and isinstance(step, int)):
+        return fallback_arange(
+            start,
+            end,
+            step,
+            dtype=dtype,
+            device=device,
+            layout=layout,
+            pin_memory=pin_memory,
+        )
 
     dtype = dtype or torch.int64
     length = ceildiv((end - start), step)
@@ -1196,6 +1224,10 @@ def select_scatter(x, src, dim: int, index: int):
     assert x.get_dtype() == src.get_dtype()
     x_loader = x.make_loader()
     dim = _validate_dim(x, dim, 0)
+    if index < 0:
+        index = index + x.get_size()[dim]
+    V.graph.sizevars.guard_leq(0, index)
+    V.graph.sizevars.guard_lt(index, x.get_size()[dim])
     src = expand(unsqueeze(src, dim), x.get_size())
     src_loader = src.make_loader()
 
@@ -1203,7 +1235,7 @@ def select_scatter(x, src, dim: int, index: int):
         return ops.where(
             ops.eq(
                 ops.index_expr(idx[dim], torch.int32),
-                ops.constant(index, torch.int32),
+                ops.index_expr(index, torch.int32),
             ),
             src_loader(idx),
             x_loader(idx),
@@ -1580,12 +1612,12 @@ def embedding(weight, indices, padding_idx=-1, scale_grad_by_freq=False, sparse=
 
 def check_and_broadcast_indices(indices):
     assert all(
-        i.get_dtype() in (torch.int64, torch.bool, torch.uint8)
+        i.get_dtype() in (torch.int64, torch.int32, torch.bool, torch.uint8)
         for i in indices
         if i is not None
     ), f"indices must be int64, byte or bool. Got {[i.get_dtype() for i in indices if i is not None]}"
     assert all(
-        [i.get_dtype() == torch.int64 for i in indices if i is not None]
+        [i.get_dtype() in (torch.int32, torch.int64) for i in indices if i is not None]
     ), "bool indices are not supported yet"
     valid_idxs = [i for i, x in enumerate(indices) if isinstance(x, TensorBox)]
     assert len(valid_idxs) > 0, "requires at least 1 non-None index"
@@ -1756,7 +1788,6 @@ def scatter_(self, dim: int, index, src, *, reduce: str = None):
     if reduce == "add":
         reduce = "sum"
     elif reduce == "multiply":
-        assert False, "TODO: multiply not supported"
         reduce = "prod"
     else:
         assert reduce is None
@@ -1778,12 +1809,36 @@ def scatter_reduce(x, dim: int, index, src, reduction_type, **kwargs):
     return scatter_reduce_(clone(x), dim, index, src, reduction_type, **kwargs)
 
 
+fallback_scatter_reduce_ = fallback_handler(aten.scatter_reduce_)
+
+
 @register_lowering(aten.scatter_reduce_, type_promotion_kind=None)
 def scatter_reduce_(self, dim: int, index, src, reduce, *, include_self: bool = True):
+    assert reduce in {None, "sum", "prod", "mean", "amax", "amin"}
+
     # TODO: Need to support more reduction type
-    assert reduce is None or reduce in {"sum"}
+    # For reduction of "sum", tl.atomic_add doesn't support bool or int64
+    if reduce not in {None, "sum"} or (
+        reduce == "sum" and self.get_dtype() in {torch.bool, torch.int64}
+    ):
+        self.realize()
+        return fallback_scatter_reduce_(
+            self, dim, index, src, reduce, include_self=include_self
+        )
+
     assert isinstance(self, TensorBox)
     assert "int" in str(index.get_dtype())
+
+    ndim = len(self.get_size())
+    if ndim == 0:
+        self = view(self, [1])
+
+    if isinstance(src, TensorBox) and len(src.get_size()) == 0:
+        src = view(src, [1])
+
+    if isinstance(index, TensorBox) and len(index.get_size()) == 0:
+        index = view(index, [1])
+
     assert -len(self.get_size()) <= dim < len(self.get_size())
 
     self.realize()
@@ -1845,6 +1900,9 @@ def scatter_reduce_(self, dim: int, index, src, reduce, *, include_self: bool = 
         scatter,
     )
     buffer.name = V.graph.register_buffer(buffer)
+
+    if ndim == 0:
+        self = view(self, [])
     return self
 
 
@@ -2591,7 +2649,7 @@ def upsample_nearest2d_backward(
 def avg_pool2d(
     x,
     kernel_size,
-    stride=[],
+    stride=(),
     padding=0,
     ceil_mode=False,
     count_include_pad=True,
@@ -3136,16 +3194,6 @@ def sum_(x, axis=None, keepdims=False, *, dtype=None):
         is_integer_dtype(x.get_dtype()) or is_boolean_dtype(x.get_dtype())
     ) and dtype is None:
         dtype = torch.int64
-
-    # This is a temp fix for https://github.com/pytorch/torchdynamo/issues/1450
-    # The root cause of the problem is a one-element bool tensor was stored as
-    # tensor([255], device='cuda:0', dtype=torch.uint8) in the forward pass output,
-    # which confuses the backward pass when it calls sum on the bool tensor.
-    # A better place to fix is in triton.py (see the comment there), but it is
-    # blocked by a trition issue on bool comparison, causing opinfo tests like
-    # test_comprehensive_gt_cuda_bool to fail.
-    if is_boolean_dtype(x.get_dtype()):
-        x = to_dtype(to_dtype(x, dtype), torch.bool)
 
     fn = make_reduction("sum", override_return_dtype=dtype)
     return fn(x, axis, keepdims, dtype=dtype)

@@ -103,6 +103,7 @@ SKIP_DIRS = [
 ]
 FILENAME_ALLOWLIST = {
     torch.nn.Sequential.__init__.__code__.co_filename,
+    torch.set_rng_state.__code__.co_filename,
 }
 
 # Include optimizer code for tracing
@@ -125,6 +126,9 @@ if HAS_PRIMS_REFS:
         torch._refs.special.__file__,
         torch._refs.nn.functional.__file__,
     }
+
+FILENAME_ALLOWLIST |= {torch.optim._functional.__file__}
+
 SKIP_DIRS_RE = None
 
 
@@ -193,5 +197,12 @@ def is_torch_inline_allowed(filename):
     )
 
 
+@functools.lru_cache(None)
+def dynamo_dir():
+    return _module_dir(importlib.import_module(config.dynamo_import))
+
+
 def is_torch(filename):
+    if filename.startswith(dynamo_dir()):
+        return False
     return filename.startswith(_module_dir(torch))

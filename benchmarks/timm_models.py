@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import importlib
 import logging
 import os
@@ -30,9 +30,8 @@ finally:
     from timm.models import create_model
 
 TIMM_MODELS = dict()
-filename = "timm_models_list.txt"
-if os.path.exists("benchmarks"):
-    filename = "benchmarks/" + filename
+filename = os.path.join(os.path.dirname(__file__), "timm_models_list.txt")
+
 with open(filename, "r") as fh:
     lines = fh.readlines()
     lines = [line.rstrip() for line in lines]
@@ -263,11 +262,7 @@ class TimmRunnner(BenchmarkRunner):
         else:
             model.eval()
 
-        if device == "cuda":
-            # capturable is only supported on cuda at the moment
-            self.optimizer = torch.optim.Adam(model.parameters(), capturable=True)
-        else:
-            self.optimizer = None
+        self.init_optimizer(device, model.parameters())
 
         self.validate_model(model, example_inputs)
 
@@ -328,8 +323,7 @@ class TimmRunnner(BenchmarkRunner):
                 pred = pred[0]
             loss = self.compute_loss(pred)
         self.grad_scaler.scale(loss).backward()
-        if self.optimizer is not None:
-            self.optimizer.step()
+        self.optimizer_step()
         if collect_outputs:
             return collect_results(mod, pred, loss, cloned_inputs)
         return None

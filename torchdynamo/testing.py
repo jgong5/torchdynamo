@@ -14,7 +14,6 @@ from . import config
 from . import eval_frame
 from . import optimize_assert
 from . import reset
-from . import utils
 from .bytecode_transformation import create_instruction
 from .bytecode_transformation import debug_checks
 from .bytecode_transformation import is_generator
@@ -198,32 +197,6 @@ def standard_test(self, fn, nargs, expected_ops=None, expected_ops_dynamic=None)
         self.assertEqual(actual.op_count, expected_ops)
 
 
-class TestCase(unittest.TestCase):
-    @classmethod
-    def tearDownClass(cls):
-        cls._exit_stack.close()
-
-    @classmethod
-    def setUpClass(cls):
-        cls._exit_stack = contextlib.ExitStack()
-        cls._exit_stack.enter_context(
-            patch.object(config, "raise_on_backend_error", True)
-        )
-        cls._exit_stack.enter_context(
-            patch.object(config, "raise_on_ctx_manager_usage", True)
-        )
-
-    def setUp(self):
-        reset()
-        utils.counters.clear()
-
-    def tearDown(self):
-        for k, v in utils.counters.items():
-            print(k, v.most_common())
-        reset()
-        utils.counters.clear()
-
-
 def dummy_fx_compile(gm: fx.GraphModule, example_inputs):
     return gm.forward
 
@@ -251,7 +224,7 @@ def rand_strided(size, stride, dtype=torch.float32, device="cpu"):
     if dtype.is_floating_point:
         buffer = torch.randn(needed_size, dtype=dtype, device=device)
     else:
-        buffer = torch.zeros(size=[needed_size], dtype=dtype, device=device)
+        buffer = torch.ones(size=[needed_size], dtype=dtype, device=device)
     return torch.as_strided(buffer, size, stride)
 
 

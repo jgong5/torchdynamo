@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import gc
 import importlib
 import logging
@@ -143,33 +143,6 @@ SLOW_BENCHMARKS = {
     "vision_maskrcnn",  # 99s
 }
 
-# https://github.com/pytorch/torchdynamo/issues/519
-AOT_AUTOGRAD_NOT_YET_WORKING = {
-    # https://github.com/pytorch/torchdynamo/issues/1147
-    "tts_angular",
-    "demucs",
-    # https://github.com/pytorch/torchdynamo/issues/739
-    "pyhpc_isoneutral_mixing",
-    "vision_maskrcnn",
-    # https://github.com/pytorch/pytorch/issues/81526
-    "moco",
-    # https://github.com/pytorch/pytorch/issues/81529
-    "speech_transformer",
-}
-
-# https://github.com/pytorch/torchdynamo/issues/332
-INDUCTOR_INFERENCE_NOT_YET_WORKING = {
-    *AOT_AUTOGRAD_NOT_YET_WORKING,
-    # Accuracy errors
-    "hf_Longformer",
-    "maml",
-    "Super_SloMo",
-}
-
-INDUCTOR_TRAINING_NOT_YET_WORKING = {
-    *INDUCTOR_INFERENCE_NOT_YET_WORKING,
-}
-
 TRT_NOT_YET_WORKING = {
     "alexnet",
     "resnet18",
@@ -230,13 +203,6 @@ class TorchBenchmarkRunner(BenchmarkRunner):
         return SKIP_TRAIN
 
     @property
-    def failing_torchinductor_models(self):
-        if self.args.training:
-            return INDUCTOR_TRAINING_NOT_YET_WORKING
-        else:
-            return INDUCTOR_INFERENCE_NOT_YET_WORKING
-
-    @property
     def failing_fx2trt_models(self):
         return TRT_NOT_YET_WORKING
 
@@ -274,6 +240,8 @@ class TorchBenchmarkRunner(BenchmarkRunner):
         if batch_size is None and is_training and model_name in USE_SMALL_BATCH_SIZE:
             batch_size = USE_SMALL_BATCH_SIZE[model_name]
 
+        # workaround "RuntimeError: not allowed to set torch.backends.cudnn flags"
+        torch.backends.__allow_nonbracketed_mutation_flag = True
         if is_training:
             benchmark = benchmark_cls(
                 test="train", device=device, jit=False, batch_size=batch_size
@@ -296,6 +264,8 @@ class TorchBenchmarkRunner(BenchmarkRunner):
             model.eval()
         gc.collect()
         batch_size = benchmark.batch_size
+
+        self.init_optimizer(device, model.parameters())
 
         # Torchbench has quite different setup for yolov3, so directly passing
         # the right example_inputs
@@ -360,6 +330,7 @@ class TorchBenchmarkRunner(BenchmarkRunner):
             pred = mod(*cloned_inputs)
             loss = self.compute_loss(pred)
         self.grad_scaler.scale(loss).backward()
+        self.optimizer_step()
         if collect_outputs:
             return collect_results(mod, pred, loss, cloned_inputs)
         return None

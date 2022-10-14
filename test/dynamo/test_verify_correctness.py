@@ -1,4 +1,4 @@
-#!/usr/bin/env pytest
+# Owner(s): ["module: dynamo"]
 import importlib
 import operator
 import unittest
@@ -8,6 +8,7 @@ import torch
 
 import torchdynamo
 import torchdynamo.config as config
+import torchdynamo.test_case
 from torchdynamo.optimizations import backends
 from torchdynamo.testing import same
 
@@ -77,7 +78,7 @@ def transform(gm: torch.fx.GraphModule) -> torch.fx.GraphModule:
     return gm
 
 
-class TestVerifyCorrectness(torchdynamo.testing.TestCase):
+class TestVerifyCorrectness(torchdynamo.test_case.TestCase):
     @patch.object(config, "verify_correctness", True)
     def test_example_inputs(self):
         def fn(a, bc, d):
@@ -167,16 +168,8 @@ class TestVerifyCorrectness(torchdynamo.testing.TestCase):
         self.assertTrue(same(r1, r2))
         self.assertEqual(r2.dtype, torch.float32)
 
-    @unittest.skipIf(not has_ipex(), "requires ipex")
-    @patch.object(config, "verify_correctness", True)
-    def test_ipex_bf16(self):
-        model = Conv_Bn_Relu(3, 32, kernel_size=3, stride=1)
-        model = model.to(memory_format=torch.channels_last)
-        model = model.eval()
-        input = torch.randn(8, 3, 64, 64).contiguous(memory_format=torch.channels_last)
-        r1 = model(input)
-        opt_model = torchdynamo.optimize(backends.ipex_bf16)(model)
-        with torch.no_grad(), torch.cpu.amp.autocast():
-            r2 = opt_model(input)
-        self.assertTrue(same(r1, r2.float(), tol=0.1))
-        self.assertEqual(r2.dtype, torch.bfloat16)
+
+if __name__ == "__main__":
+    from torchdynamo.test_case import run_tests
+
+    run_tests()

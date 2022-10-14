@@ -4,7 +4,7 @@ PY_FILES := $(wildcard *.py) $(wildcard torchdynamo/*.py) $(wildcard torchdynamo
             $(wildcard torchinductor/*.py) $(wildcard torchinductor/*/*.py)  \
             $(wildcard benchmarks/*.py) $(wildcard benchmarks/*/*.py)  \
             $(wildcard test/*.py) $(wildcard test/*/*.py)  \
-            $(wildcard .circleci/*.py)
+            $(wildcard .circleci/*.py) $(wildcard tools/*.py)
 C_FILES := $(wildcard torchdynamo/*.c torchdynamo/*.cpp)
 CLANG_TIDY ?= clang-tidy-10
 CLANG_FORMAT ?= clang-format-10
@@ -12,8 +12,8 @@ PIP ?= python -m pip
 
 # versions used in CI
 # Also update the "Install nightly binaries" section of the README when updating these
-PYTORCH_VERSION ?= dev20221006
-TRITON_VERSION ?= d3c925db8a81ca74f14680876b9311e7d079c5a1
+PYTORCH_VERSION ?= dev20221013
+TRITON_VERSION ?= af76c989eb4799b015f8b288ccd8421558772e56
 
 
 default: develop
@@ -33,16 +33,11 @@ overhead: develop
 format:
 	isort $(PY_FILES)
 	black $(PY_FILES)
-	! which $(CLANG_FORMAT) >/dev/null 2>&1 || $(CLANG_FORMAT) -i $(C_FILES)
 
 lint:
 	black --check --diff $(PY_FILES)
 	isort --check --diff $(PY_FILES)
 	flake8 $(PY_FILES)
-	mypy
-	! which $(CLANG_TIDY) >/dev/null 2>&1 || $(CLANG_TIDY) $(C_FILES) -- \
-		-I`python -c 'from distutils.sysconfig import get_python_inc as X; print(X())'` \
-		`python -c 'from torch.utils.cpp_extension import include_paths; print(" ".join(map("-I{}".format, include_paths())))'`
 
 lint-deps:
 	grep -E '(black|flake8|isort|click|torch|mypy)' requirements.txt | xargs $(PIP) install
@@ -54,12 +49,12 @@ setup:
 
 setup_nightly:
 	$(PIP) install ninja
-	$(PIP) install --pre torch==1.13.0.$(PYTORCH_VERSION) --extra-index-url https://download.pytorch.org/whl/nightly/cpu
+	$(PIP) install --pre torch==1.14.0.$(PYTORCH_VERSION) --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 	$(PIP) install -r requirements.txt
 
 setup_nightly_gpu:
 	conda install -y -c pytorch magma-cuda116 cudatoolkit=11.6 -c conda-forge
-	$(PIP) install --pre torch==1.13.0.$(PYTORCH_VERSION) \
+	$(PIP) install --pre torch==1.14.0.$(PYTORCH_VERSION) \
                       torchvision==0.15.0.$(PYTORCH_VERSION) \
                       torchtext==0.14.0.$(PYTORCH_VERSION) \
                       --extra-index-url https://download.pytorch.org/whl/nightly/cu116
