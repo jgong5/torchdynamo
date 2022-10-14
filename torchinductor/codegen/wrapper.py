@@ -71,11 +71,6 @@ class MemoryPlanningState:
         self.reuse_pool: Dict[
             Any, List["FreeIfNotReusedLine"]
         ] = collections.defaultdict(list)
-        self.reused_as_dict: Dict[
-            # key (buffer name) reused as value (buffer)
-            str,
-            ir.Buffer,
-        ] = {}
 
     def __contains__(self, key):
         return bool(self.reuse_pool.get(key, None))
@@ -88,20 +83,6 @@ class MemoryPlanningState:
     def push(self, key, item: "FreeIfNotReusedLine"):
         assert not item.is_reused
         self.reuse_pool[key].append(item)
-
-    def reused_as(self, buf_name):
-        if buf_name in self.reused_as_dict:
-            return self.reused_as_dict[buf_name]
-        else:
-            return None
-
-    def update_reused_as(self, buf_name, reused_as_buf):
-        # Map buf_name to reused_as_buf
-        self.reused_as_dict[buf_name] = reused_as_buf
-        # Replace values under buf_name with reused_as_buf
-        for key, value in self.reused_as_dict.items():
-            if value.get_name() == buf_name:
-                self.reused_as_dict[key] = reused_as_buf
 
 
 class MemoryPlanningLine:
@@ -160,20 +141,9 @@ class ReuseLine(MemoryPlanningLine):
     reused_as: ir.Buffer
 
     def plan(self, state: MemoryPlanningState):
-        reused_as_removed = self.reused_as.get_name() in V.graph.removed_buffers
-        node_removed = self.node.get_name() in V.graph.removed_buffers
-        if reused_as_removed:
-            return NullLine()
-        elif node_removed:
-            return AllocateLine(self.reused_as)
-        # Neither reused_as nor node is removed
-        reuse_line = self
-        old_reused_as = state.reused_as(self.node.get_name())
-        if old_reused_as is not None:
-            reuse_line = ReuseLine(old_reused_as, self.reused_as)
-        state.update_reused_as(self.node.get_name(), self.reused_as)
-        assert reuse_line.node.get_name() not in V.graph.removed_buffers
-        return reuse_line
+        assert self.node.get_name() not in V.graph.removed_buffers
+        assert self.reused_as.get_name() not in V.graph.removed_buffers
+        return self
 
     def codegen(self, code: IndentedBuffer):
         assert self.node.get_name() not in V.graph.removed_buffers
